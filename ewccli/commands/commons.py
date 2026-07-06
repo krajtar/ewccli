@@ -30,6 +30,9 @@ from ewccli.enums import HubItemOherAnnotation, HubItemCLIKeys
 from ewccli.configuration import config as ewc_hub_config
 from ewccli.utils import download_items
 from ewccli.logger import get_logger
+from ewccli.services.config_service import ConfigService
+from ewccli.services.dns_service import DnsService
+from ewccli.services.exceptions import ConfigServiceError
 
 _LOGGER = get_logger(__name__)
 
@@ -54,15 +57,12 @@ class CommonContext:
 
 def validate_config_name(ctx, param, value):
     """Validate config name."""
-    if not value:
-        return value
-
-    pattern = r"^[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"
-    if not re.match(pattern, value):
+    try:
+        return ConfigService.validate_config_name(value)
+    except ConfigServiceError:
         raise click.BadParameter(
             "Config name must be exactly 4 alphanumeric parts separated by dashes (e.g. tenant-federee-east-zone)."
         )
-    return value
 
 
 def login_options(func):
@@ -96,45 +96,16 @@ def default_username():
 
 def load_hub_items(path_to_catalog: str = ewc_hub_config.EWC_CLI_HUB_ITEMS_PATH) -> dict:
     """Load EWC Hub Items from file."""
-    download_items()
-    with open(path_to_catalog, "r") as file:
-        items_file = yaml.safe_load(file)
-
-        if not items_file:
-            _LOGGER.error("items.yaml is empty.")
-            sys.exit(1)
-
-        items_spec = items_file.get("spec")
-
-        if not items_spec:
-            _LOGGER.error("spec key is missing from items.yaml.")
-            sys.exit(1)
-
-        items = items_spec.get("items")
-
-        if not items:
-            _LOGGER.error("items key is missing from spec key in items.yaml.")
-            sys.exit(1)
-
-        return items
+    try:
+        return ConfigService.load_hub_items(path_to_catalog=path_to_catalog)
+    except ConfigServiceError as e:
+        _LOGGER.error(str(e))
+        sys.exit(1)
 
 
 def split_config_name(config_name: str) -> tuple[str, str]:
-    """
-    Splits config_name into federee and tenant_name.
-
-    Assumes the format: <federee>-<tenant-part1>-<tenant-part2>-<tenant-part3>
-
-    :param config_name: The combined config name string.
-    :return: A tuple (federee, tenant_name).
-    :raises ValueError: if config_name format is invalid.
-    """
-    parts = config_name.split("-")
-    if len(parts) != 4:
-        raise ValueError("config_name must have exactly 4 parts separated by '-'")
-    federee = parts[0]
-    tenant_name = "-".join(parts[1:])
-    return federee, tenant_name
+    """Splits config_name into federee and tenant_name."""
+    return ConfigService.split_config_name(config_name=config_name)
 
 
 def openstack_options(func):
@@ -578,57 +549,21 @@ def describe_object(obj: dict) -> None:
 def build_dns_record_name(
     server_name: str, tenancy_name: str, hosting_location: str
 ) -> str:
-    """
-    Build a DNS hostname using the ewcloud pattern:
-    <machine-name>.<tenancy-name>.<hosting-location>.ewcloud.host
-    Source: https://confluence.ecmwf.int/display/EWCLOUDKB/EWC+DNS
-    """
-    if not all([server_name, tenancy_name, hosting_location]):
-        raise ValueError(
-            "All arguments (server_name, tenancy_name, hosting_location) are required."
-        )
-
-    dns_record_name = f"{server_name}.{tenancy_name}.{hosting_location}.ewcloud.host"
-    _LOGGER.debug("Built DNS Record Name: %s", dns_record_name)
-    return dns_record_name
+    """Build a DNS hostname using the ewcloud pattern."""
+    return DnsService.build_dns_record_name(
+        server_name=server_name,
+        tenancy_name=tenancy_name,
+        hosting_location=hosting_location,
+    )
 
 
 def wait_for_dns_record(
     dns_record_name: str, expected_ip: str, interval: int = 60, timeout_minutes: int = 5
 ) -> bool:
-    """
-    Waits until the given dns_record_name resolves to the expected IP.
-    """
-    deadline = time.time() + timeout_minutes * 60
-    _LOGGER.info("Waiting for %s to resolve to %s...", dns_record_name, expected_ip)
-    _LOGGER.info("⏳ This could take several minutes, grab some snack meanwhile...")
-
-    while time.time() < deadline:
-        try:
-            resolved_ip = socket.gethostbyname(dns_record_name)
-
-            if resolved_ip == expected_ip:
-                _LOGGER.info("Success: %s resolved to %s", dns_record_name, resolved_ip)
-                return True
-            else:
-                _LOGGER.debug(
-                    "%s currently resolves to %s (expected %s)",
-                    dns_record_name,
-                    resolved_ip,
-                    expected_ip,
-                )
-
-        except socket.gaierror:
-            _LOGGER.info(
-                f"{dns_record_name} not found in DNS yet. Retrying in {interval} seconds..."
-            )
-
-        time.sleep(interval)
-
-    _LOGGER.warning(
-        "Timeout: %s did not resolve to %s within %d minutes.",
-        dns_record_name,
-        expected_ip,
-        timeout_minutes,
+    """Wait until dns_record_name resolves to expected_ip."""
+    return DnsService.wait_for_dns_record(
+        dns_record_name=dns_record_name,
+        expected_ip=expected_ip,
+        interval=interval,
+        timeout_minutes=timeout_minutes,
     )
-    return False
