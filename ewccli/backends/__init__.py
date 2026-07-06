@@ -5,7 +5,6 @@
 # Copyright (c) 2025 EUMETSAT, ECMWF for European Weather Cloud
 # See the LICENSE file for more details
 
-"""Backends for EWC CLI."""
 """Backends for EWC CLI.
 
 This package contains the concrete backend clients (OpenStack, Kubernetes,
