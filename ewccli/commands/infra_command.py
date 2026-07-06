@@ -30,12 +30,16 @@ from ewccli.commands.commons import login_options
 from ewccli.commands.commons_infra import check_user_ssh_keys
 from ewccli.commands.commons_infra import get_deployed_server_info, list_server_details
 from ewccli.commands.commons_infra import create_server_command
+from ewccli.services.server_service import ServerService
+from ewccli.services.exceptions import ServerOperationError
 from ewccli.utils import load_cli_profile
 from ewccli.logger import get_logger
 
 _LOGGER = get_logger(__name__)
 
 console = Console()
+
+_server_service = ServerService()
 
 infra_context = click.make_pass_decorator(CommonBackendContext, ensure=True)
 
@@ -192,19 +196,23 @@ def create_cmd(
         "item_default_security_groups": ewc_hub_config.DEFAULT_SECURITY_GROUP_MAP[federee]
     }
 
-    os_status_code, os_message, outputs = create_server_command(
-        openstack_backend=ctx.openstack_backend,
-        openstack_api=openstack_api,
-        federee=federee,
-        region=region,
-        server_inputs=server_inputs,
-        ssh_private_encoded=ssh_private_encoded,
-        ssh_public_encoded=ssh_public_encoded,
-        ssh_public_key_path=ssh_public_key_path,
-        ssh_private_key_path=ssh_private_key_path,
-        dry_run=dry_run,
-        force=force,  
-    )
+    try:
+        os_status_code, os_message, outputs = _server_service.create_server(
+            openstack_backend=ctx.openstack_backend,
+            openstack_api=openstack_api,
+            federee=federee,
+            region=region,
+            server_inputs=server_inputs,
+            ssh_private_encoded=ssh_private_encoded,
+            ssh_public_encoded=ssh_public_encoded,
+            ssh_public_key_path=ssh_public_key_path,
+            ssh_private_key_path=ssh_private_key_path,
+            dry_run=dry_run,
+            force=force,
+        )
+    except ServerOperationError as e:
+        console.print(Panel(str(e), title="Error", style="red"))
+        sys.exit(1)
     internal_ip_machine = outputs["internal_ip_machine"]
     external_ip_machine = outputs["external_ip_machine"]
     normalized_image_name = outputs.get("normalized_image_name")
@@ -299,7 +307,7 @@ def show_cmd(
 
     image_name = image_info.get("name")
 
-    vm_info = get_deployed_server_info(
+    vm_info = _server_service.get_deployed_server_info(
         federee=federee,
         server_info=server_info,
         image_name=image_name,

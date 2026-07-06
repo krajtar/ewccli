@@ -44,6 +44,10 @@ from ewccli.commands.hub.hub_backends import git_clone_item
 from ewccli.commands.hub.hub_backends import run_ansible_playbook_item
 from ewccli.commands.hub.hub_backends import get_hub_item_env_variable_value
 from ewccli.commands.hub.hub_backends import HUB_ENV_VARIABLES_MAP
+from ewccli.services.hub_deploy_service import HubDeployService
+from ewccli.services.server_service import ServerService
+from ewccli.services.dns_service import DnsService
+from ewccli.services.exceptions import ServerOperationError, ValidationError
 from ewccli.backends.openstack.backend_ostack import OpenstackBackend
 from ewccli.enums import HubItemTechnologyAnnotation
 from ewccli.enums import HubItemCategoryAnnotation
@@ -54,6 +58,10 @@ from ewccli.utils import load_cli_profile
 _LOGGER = get_logger(__name__)
 
 console = Console()
+
+_hub_deploy_service = HubDeployService()
+_server_service = ServerService()
+_dns_service = DnsService()
 
 
 @click.group(name="hub")
@@ -100,27 +108,10 @@ def categorize_item_inputs(
     item_info_inputs: list
 ):  # noqa CCR001
     """Categorize item inputs into default and mandatory."""
-    default_inputs = []
-    required_inputs = []
-
-    # if no inputs exist for the item, no inputs are requested from the user
-    if not item_info_inputs:
-        return required_inputs, default_inputs
-
-    for item_input in item_info_inputs:
-        # If there is a default, the item is part of the default inputs -> not required by the user
-        if "default" in item_input:
-            # default value exists
-            default_inputs.append(item_input)
-
-        # If the item input has no default, it should be mandatory, but if the variable is known by the ewccli,
-        # because it's related to the infrastructure or it's very specific to EWC, then the default will be applied by the EWCCLI
-        # TODO: Change once we have the new variable specific to ewccli default parameters (e.g. tenancy_name, network_name)
-        elif item_input.get("name", "") in HUB_ENV_VARIABLES_MAP:
-            default_inputs.append(item_input)
-        else:
-            # In other case, the input is mandatory and it needs to be provided by the user.
-            required_inputs.append(item_input)
+    required_inputs, default_inputs = _hub_deploy_service.categorize_item_inputs(
+        item_info=item_info,
+        item_info_inputs=item_info_inputs,
+    )
 
     ctx = get_current_context()  # <-- Get Click Context
 
@@ -134,84 +125,21 @@ def categorize_item_inputs(
 def check_missing_required_inputs(
     parsed_inputs: Optional[Dict[str, str]], required_item_inputs: List[dict]
 ) -> Optional[List[Any]]:
-    """
-    Verify that all required inputs are provided.
-
-    :param parsed_inputs: dict of user-provided inputs
-    :param required_item_inputs: list of dicts defining required inputs
-    :return: list of missing required input names
-    """
-    if not required_item_inputs:
-        return []
-
-    # Extract required keys from the required_item_inputs definitions
-    required_keys = [item_input.get("name") for item_input in required_item_inputs]
-
-    # Determine which required keys are missing from user inputs
-    missing_keys = [
-        key for key in required_keys if not parsed_inputs or key not in parsed_inputs
-    ]
-
-    return missing_keys
+    """Verify that all required inputs are provided."""
+    return _hub_deploy_service.check_missing_required_inputs(
+        parsed_inputs=parsed_inputs,
+        required_item_inputs=required_item_inputs,
+    )
 
 
 def validate_item_input_types(
     parsed_inputs: Optional[dict], item_info_inputs: Optional[list]
 ) -> str:
-    """
-    Validate parsed_inputs against a schema using Pydantic.
-
-    schema example:
-    [
-        {"name": "foo", "type": "str"},
-        {"name": "bar", "type": "List[int]"},
-        {"name": "baz", "type": "Optional[str]"},
-        {"name": "qux", "type": "Union[str, int]"},
-    ]
-
-    Returns:
-        "" if all inputs are valid, otherwise a string describing invalid inputs.
-    """
-    if not item_info_inputs or not parsed_inputs:
-        return ""
-
-    # # Prepare safe globals with all typing names
-    safe_globals = {k: getattr(typing, k) for k in dir(typing) if not k.startswith("_")}
-    safe_globals.update({"Any": Any})  # Add Any from builtins
-
-    # Build a dict of pydantic fields: { field_name: (python_type, required) }
-    fields = {}
-    expected_types_map = {}  # Keep original type strings for error messages
-
-    for entry in item_info_inputs:
-        name = entry["name"]
-        type_expr = entry["type"]
-        expected_types_map[name] = type_expr  # Save for later display
-
-        try:
-            py_type = eval(type_expr, safe_globals)
-        except Exception:
-            py_type = Any
-
-        fields[name] = (py_type, ...)  # ... = required field
-
-    # Create a dynamic Pydantic model
-    DynamicInputs = create_model("DynamicInputs", **fields)
-
-    try:
-        DynamicInputs(**parsed_inputs)
-        return ""
-
-    except ValidationError as e:
-        # Build detailed error messages including expected type
-        error_lines = []
-        for err in e.errors():
-            loc = ".".join(str(x) for x in err["loc"])
-            msg = err["msg"]
-            expected_type = expected_types_map.get(err["loc"][0], "Unknown")
-            error_lines.append(f"{loc}: {msg} (expected type: {expected_type})")
-
-        return "Invalid input types:\n  " + "\n  ".join(error_lines)
+    """Validate parsed_inputs against a schema using Pydantic."""
+    return _hub_deploy_service.validate_item_input_types(
+        parsed_inputs=parsed_inputs,
+        item_info_inputs=item_info_inputs,
+    )
 
 
 class KeyValueType(click.ParamType):
@@ -631,19 +559,22 @@ def deploy_cmd(  # noqa: CFQ002, CFQ001, CCR001, C901
             )
         }
 
-        os_status_code, os_message, outputs = create_server_command(
-            openstack_backend=openstack_backend,
-            openstack_api=openstack_api,
-            federee=federee,
-            region=region,
-            server_inputs=server_inputs,
-            ssh_private_encoded=ssh_private_encoded,
-            ssh_public_encoded=ssh_public_encoded,
-            ssh_public_key_path=ssh_public_key_path,
-            ssh_private_key_path=ssh_private_key_path,
-            dry_run=dry_run,
-            force=force,  
-        )
+        try:
+            os_status_code, os_message, outputs = _server_service.create_server(
+                openstack_backend=openstack_backend,
+                openstack_api=openstack_api,
+                federee=federee,
+                region=region,
+                server_inputs=server_inputs,
+                ssh_private_encoded=ssh_private_encoded,
+                ssh_public_encoded=ssh_public_encoded,
+                ssh_public_key_path=ssh_public_key_path,
+                ssh_private_key_path=ssh_private_key_path,
+                dry_run=dry_run,
+                force=force,
+            )
+        except ServerOperationError as e:
+            raise ClickException(str(e))
 
         internal_ip_machine = outputs["internal_ip_machine"]
         external_ip_machine = outputs["external_ip_machine"]
@@ -661,13 +592,13 @@ def deploy_cmd(  # noqa: CFQ002, CFQ001, CCR001, C901
                     " please re run the command with --external-ip."
                 )
 
-            dns_record_name = build_dns_record_name(
+            dns_record_name = _dns_service.build_dns_record_name(
                 server_name=server_name,
                 tenancy_name=tenancy_name,
                 hosting_location=ewc_hub_config.FEDEREE_DNS_MAPPING[federee],
             )
 
-            dns_record_check = wait_for_dns_record(
+            dns_record_check = _dns_service.wait_for_dns_record(
                 dns_record_name=dns_record_name,
                 expected_ip=external_ip_machine,
                 timeout_minutes=ewc_hub_config.DNS_CHECK_TIMEOUT_MINUTES,

@@ -29,12 +29,18 @@ from ewccli.backends.kubernetes.utils import get_reason_from_conditions
 from ewccli.enums import HubItemOherAnnotation, HubItemCLIKeys
 from ewccli.configuration import config as ewc_hub_config
 from ewccli.utils import download_items
+from ewccli.services.config_service import ConfigService
+from ewccli.services.dns_service import DnsService
+from ewccli.services.exceptions import ConfigError, DnsError
 from ewccli.logger import get_logger
 
 _LOGGER = get_logger(__name__)
 
 
 console = Console()
+
+_config_service = ConfigService()
+_dns_service = DnsService()
 
 
 # Global state container
@@ -96,45 +102,16 @@ def default_username():
 
 def load_hub_items(path_to_catalog: str = ewc_hub_config.EWC_CLI_HUB_ITEMS_PATH) -> dict:
     """Load EWC Hub Items from file."""
-    download_items()
-    with open(path_to_catalog, "r") as file:
-        items_file = yaml.safe_load(file)
-
-        if not items_file:
-            _LOGGER.error("items.yaml is empty.")
-            sys.exit(1)
-
-        items_spec = items_file.get("spec")
-
-        if not items_spec:
-            _LOGGER.error("spec key is missing from items.yaml.")
-            sys.exit(1)
-
-        items = items_spec.get("items")
-
-        if not items:
-            _LOGGER.error("items key is missing from spec key in items.yaml.")
-            sys.exit(1)
-
-        return items
+    try:
+        return _config_service.load_hub_items(path_to_catalog=path_to_catalog)
+    except ConfigError as e:
+        _LOGGER.error(str(e))
+        sys.exit(1)
 
 
 def split_config_name(config_name: str) -> tuple[str, str]:
-    """
-    Splits config_name into federee and tenant_name.
-
-    Assumes the format: <federee>-<tenant-part1>-<tenant-part2>-<tenant-part3>
-
-    :param config_name: The combined config name string.
-    :return: A tuple (federee, tenant_name).
-    :raises ValueError: if config_name format is invalid.
-    """
-    parts = config_name.split("-")
-    if len(parts) != 4:
-        raise ValueError("config_name must have exactly 4 parts separated by '-'")
-    federee = parts[0]
-    tenant_name = "-".join(parts[1:])
-    return federee, tenant_name
+    """Splits config_name into federee and tenant_name."""
+    return _config_service.split_config_name(config_name)
 
 
 def openstack_options(func):
@@ -578,19 +555,15 @@ def describe_object(obj: dict) -> None:
 def build_dns_record_name(
     server_name: str, tenancy_name: str, hosting_location: str
 ) -> str:
-    """
-    Build a DNS hostname using the ewcloud pattern:
-    <machine-name>.<tenancy-name>.<hosting-location>.ewcloud.host
-    Source: https://confluence.ecmwf.int/display/EWCLOUDKB/EWC+DNS
-    """
-    if not all([server_name, tenancy_name, hosting_location]):
-        raise ValueError(
-            "All arguments (server_name, tenancy_name, hosting_location) are required."
+    """Build a DNS hostname using the ewcloud pattern."""
+    try:
+        return _dns_service.build_dns_record_name(
+            server_name=server_name,
+            tenancy_name=tenancy_name,
+            hosting_location=hosting_location,
         )
-
-    dns_record_name = f"{server_name}.{tenancy_name}.{hosting_location}.ewcloud.host"
-    _LOGGER.debug("Built DNS Record Name: %s", dns_record_name)
-    return dns_record_name
+    except DnsError as e:
+        raise ValueError(str(e))
 
 
 def wait_for_dns_record(

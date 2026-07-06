@@ -285,14 +285,14 @@ def test_pre_deploy_server_setup_invalid_encoded_keys(conn):
         "networks": ("private",),
     }
 
-    with patch("ewccli.commands.commons_infra.check_ssh_keys_exist"), \
-         patch("ewccli.commands.commons_infra.resolve_image_and_flavor",
+    with patch("ewccli.services.server_service.ServerService.check_ssh_keys_exist"), \
+         patch("ewccli.services.server_service.ServerService.resolve_image_and_flavor",
                return_value=(0, "ok", {
                    "image_name": "Ubuntu-22.04",
                    "normalized_image_name": "Ubuntu-22.04",
                    "flavour_name": "m1.small"
                })), \
-         patch("ewccli.commands.commons_infra.save_encoded_ssh_keys",
+         patch("ewccli.services.server_service.save_encoded_ssh_keys",
                return_value=(False, False)):
 
         code, msg, outputs = pre_deploy_server_setup(
@@ -326,8 +326,8 @@ def test_pre_deploy_server_setup_success(conn):
         "networks": ("private",),
     }
 
-    with patch("ewccli.commands.commons_infra.check_ssh_keys_exist"), \
-         patch("ewccli.commands.commons_infra.resolve_image_and_flavor",
+    with patch("ewccli.services.server_service.ServerService.check_ssh_keys_exist"), \
+         patch("ewccli.services.server_service.ServerService.resolve_image_and_flavor",
                return_value=(0, "ok", {
                    "image_name": "Ubuntu-22.04",
                    "normalized_image_name": "Ubuntu-22.04",
@@ -364,8 +364,8 @@ def test_pre_deploy_server_setup_invalid_inputs(conn):
         "networks": ("private",),
     }
 
-    with patch("ewccli.commands.commons_infra.check_ssh_keys_exist"), \
-         patch("ewccli.commands.commons_infra.resolve_image_and_flavor",
+    with patch("ewccli.services.server_service.ServerService.check_ssh_keys_exist"), \
+         patch("ewccli.services.server_service.ServerService.resolve_image_and_flavor",
                return_value=(0, "ok", {
                    "image_name": "Ubuntu-22.04",
                    "normalized_image_name": "Ubuntu-22.04",
@@ -408,7 +408,7 @@ def test_identify_server_reconfiguration_existing_server(conn):
     conn.compute.find_image.return_value = MagicMock(name="Ubuntu-22.04")
 
     with patch(
-        "ewccli.commands.commons_infra.check_server_conflict_with_inputs",
+        "ewccli.services.server_service.ServerService.check_server_conflict_with_inputs",
         return_value={}
     ):
         code, msg, outputs = identify_server_reconfiguration(
@@ -520,7 +520,7 @@ def test_post_deploy_server_setup_success(conn):
     conn.get_server.return_value = refreshed_server_info
 
     with patch(
-        "ewccli.commands.commons_infra.resolve_machine_ip",
+        "ewccli.services.server_service.ServerService.resolve_machine_ip",
         side_effect=[
             # first call (before refresh)
             (0, "ok", {"internal_ip_machine": "10.0.0.5"}),
@@ -556,7 +556,7 @@ def test_post_deploy_server_setup_missing_ip(conn):
     initial_server_info = MagicMock()
 
     with patch(
-        "ewccli.commands.commons_infra.resolve_machine_ip",
+        "ewccli.services.server_service.ServerService.resolve_machine_ip",
         return_value=(0, "ok", None),
     ):
         server_inputs = {
@@ -604,15 +604,15 @@ def test_create_server_command_success(conn):
     }
 
     with patch(
-        "ewccli.commands.commons_infra.pre_deploy_server_setup",
+        "ewccli.services.server_service.ServerService.pre_deploy_server_setup",
         return_value=(0, "ok", pre_deploy_outputs),
     ) as mock_pre, patch(
-        "ewccli.commands.commons_infra.identify_server_reconfiguration"
+        "ewccli.services.server_service.ServerService.identify_server_reconfiguration"
     ) as mock_identify, patch(
-        "ewccli.commands.commons_infra.deploy_server",
+        "ewccli.services.server_service.ServerService.deploy_server",
         return_value=(0, "ok", deploy_outputs),
     ) as mock_deploy, patch(
-        "ewccli.commands.commons_infra.post_deploy_server_setup",
+        "ewccli.services.server_service.ServerService.post_deploy_server_setup",
         return_value=(0, "ok", post_deploy_outputs),
     ) as mock_post:
 

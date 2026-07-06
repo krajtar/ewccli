@@ -31,8 +31,14 @@ from click import ClickException
 from ewccli.enums import Federee
 from ewccli.configuration import config as ewc_hub_config
 from ewccli.logger import get_logger
+from ewccli.services.config_service import ConfigService
+from ewccli.services.keypair_service import KeyPairService
+from ewccli.services.exceptions import ConfigError, KeyPairError
 
 _LOGGER = get_logger(__name__)
+
+_config_service = ConfigService()
+_keypair_service = KeyPairService()
 
 
 def _resolve_profile(
@@ -42,20 +48,16 @@ def _resolve_profile(
     tenant_name: Optional[str] = None,
 ) -> str:
     """Return explicit profile or auto-generate one using federee-tenant."""
-    if profile is not None:
-        return profile
-
-    # Validate required components
-    if not federee or not region or not tenant_name:
-        click.secho(
-            "❌ Either 'profile' must be provided or all of 'federee', 'region', and 'tenant_name'.",
-            fg="red",
-            bold=True,
+    try:
+        return _config_service.resolve_profile(
+            profile=profile,
+            federee=federee,
+            region=region,
+            tenant_name=tenant_name,
         )
+    except ConfigError as e:
+        click.secho(f"❌ {e}", fg="red", bold=True)
         raise click.Abort()
-
-    # Auto-generate profile name
-    return f"{federee.lower()}-{region.lower()}-{tenant_name.lower()}"
 
 
 def save_default_login_profile(
@@ -69,35 +71,17 @@ def save_default_login_profile(
     token: Optional[str] = None,
     profiles_file_path: Path = ewc_hub_config.EWC_CLI_PROFILES_PATH,
 ) -> None:
-    """
-    Save the default login profile to EWC_CLI_PROFILES_PATH only if it does not exist.
-    If it already exists, do nothing (skip).
-
-    Uses ewc_hub_config.EWC_CLI_DEFAULT_PROFILE_NAME as the profile name.
-    """
-    resolved_profile = _resolve_profile(
-        profile=ewc_hub_config.EWC_CLI_DEFAULT_PROFILE_NAME,
-    )
-
-    cfg = ConfigParser()
-    cfg.read(profiles_file_path)
-
-    # Skip saving if the default profile already exists
-    if resolved_profile in cfg:
-        return
-
-    # Save profile (reusing the unified save_cli_profile logic)
-
-    save_cli_profile(
+    """Save the default login profile if it does not already exist."""
+    _config_service.save_default_login_profile(
         federee=federee,
         region=region,
         tenant_name=tenant_name,
         ssh_private_key_path_to_save=ssh_private_key_path_to_save,
         ssh_public_key_path_to_save=ssh_public_key_path_to_save,
-        profile=resolved_profile,
-        token=token,
         application_credential_id=application_credential_id,
         application_credential_secret=application_credential_secret,
+        token=token,
+        profiles_file_path=profiles_file_path,
     )
 
 
@@ -188,188 +172,18 @@ def load_cli_profile(
     profiles_file_path: Path = ewc_hub_config.EWC_CLI_PROFILES_PATH,
     dry_run: bool = False
 ) -> Dict[str, Optional[str]]:
-    """
-    Load all profile data (config + credentials) from the single profiles file.
-
-    Parameters
-    ----------
-    profile : str, optional
-        Explicit profile name to load. If None, auto-resolved from federee and tenant_name.
-    federee : str, optional
-        Federee name, used for auto-resolution if profile is None.
-    tenant_name : str, optional
-        Tenant name, used for auto-resolution if profile is None.
-    profiles_file_path : Path, default to ewc_hub_config.EWC_CLI_PROFILES_PATH
-        The path to the file with all profiles.
-
-    Returns
-    -------
-    dict
-        Combined profile data.
-
-    Raises
-    ------
-    click.Abort
-        If the profile cannot be found or cannot be resolved.
-    """
-    if dry_run:
-        return {
-            "profile": "dry-run",
-            "federee": "EUMETSAT",
-            "region": "ECIS-R1",
-            "tenant_name": "internal-ewc-admins",
-            "ssh_public_key_path": "/tmp/id_rsa.pub",
-            "ssh_private_key_path": "/tmp/id_rsa",
-            "token": None,
-            "application_credential_id": "",
-            "application_credential_secret": "",
-        }
-
-    if profile is None:
-        if not federee or not tenant_name:
-            click.secho(
-                "❌ Either 'profile' must be provided or both 'federee' and 'tenant_name'.",
-                fg="red",
-                bold=True,
-            )
-            raise click.Abort()
-        profile = _resolve_profile(profile, federee, tenant_name)
-
-    cfg = ConfigParser()
-    cfg.read(profiles_file_path)
-
-    # Case 1: file missing or empty
-    if not os.path.exists(profiles_file_path) or not cfg.sections():
-        click.secho(
-            "❌ No profiles found.",
-            fg="red",
-            bold=True,
+    """Load all profile data from the profiles file."""
+    try:
+        return _config_service.load_cli_profile(
+            profile=profile,
+            federee=federee,
+            tenant_name=tenant_name,
+            profiles_file_path=profiles_file_path,
+            dry_run=dry_run,
         )
-        click.secho(
-            f"Searched in: {profiles_file_path}",
-            fg="cyan",
-        )
-        click.secho(
-            "Please run 'ewc login' first to create a profile.",
-            fg="yellow",
-        )
+    except ConfigError as e:
+        click.secho(f"❌ {e}", fg="red", bold=True)
         raise click.Abort()
-
-    default_profile = ewc_hub_config.EWC_CLI_DEFAULT_PROFILE_NAME
-    # Case 2: requested profile missing
-    if profile and profile not in cfg:
-        if profile != default_profile:
-            click.secho(
-                f"❌ Profile '{profile}' not found.",
-                fg="red",
-                bold=True,
-            )
-            click.secho(
-                f"Searched in: {profiles_file_path}",
-                fg="cyan",
-            )
-            if cfg.sections():
-                click.secho(
-                    f"ℹ️ The {profile} profile does not exist, but other profiles are available:",
-                    fg="yellow",
-                )
-                for name in cfg.sections():
-                    click.secho(f"  • {name}", fg="green")
-
-                click.secho(
-                    "You can either:",
-                    fg="yellow",
-                )
-                if default_profile in cfg:
-                    click.secho(
-                        "  • Use the default without --profile",
-                        fg="cyan",
-                    )
-                click.secho(
-                    "  • Use one of the existing profiles with --profile <profile_name>",
-                    fg="cyan",
-                )
-                click.secho(
-                    "  • Or run 'ewc login' to create a new profile",
-                    fg="cyan",
-                )
-
-        # Case 3: default profile missing but others exist
-        if profile == default_profile and default_profile not in cfg and cfg.sections():
-            click.secho(
-                "ℹ️ The default profile does not exist, but other profiles are available:",
-                fg="yellow",
-            )
-            for name in cfg.sections():
-                click.secho(f"  • {name}", fg="green")
-
-            click.secho(
-                "You can either:",
-                fg="yellow",
-            )
-            click.secho(
-                "  • Use one of the existing profiles with --profile <profile_name>",
-                fg="cyan",
-            )
-            click.secho(
-                "  • Or run 'ewc login' to create the default profile automatically",
-                fg="cyan",
-            )
-
-        raise click.Abort()
-
-    section = cfg[profile]
-
-    federee = section.get("federee")
-
-    allowed_federees = [r.value for r in Federee]
-    if federee not in allowed_federees:
-        raise ClickException(
-            f"`{federee}` federee not supported. Check your profiles in ~/.ewccli/profiles. Please use one from the following: {allowed_federees}"
-        )
-
-    region = section.get("region")
-    allowed_regions = ewc_hub_config.allowed_regions(federee)
-    if not region:
-        raise ClickException(
-            "Since ewccli v0.4.0 `region` is mandatory into a profile. "
-            f"Check your profiles in ~/.ewccli/profiles and add region key with allowed values: {allowed_regions} for {federee}."
-            "Or simply create a new profile using ewc login command."
-        )
-
-    # Check if SSH keys path exist
-    ssh_public_key_path = section.get("ssh_public_key_path")
-
-    if not ssh_public_key_path:
-        raise ClickException(
-            "Since ewccli v0.3.0 `ssh_public_key_path` is mandatory into a profile. "
-            f"`ssh_public_key_path` key is missing from your profile {profile}. "
-            f"Check your profile in ~/.ewccli/profiles and add ssh_public_key_path with a path to your SSH public key."
-            "Or simply create a new profile using ewc login command."
-        )
-        
-    ssh_private_key_path = section.get("ssh_private_key_path")
-
-    if not ssh_private_key_path:
-        raise ClickException(
-            "Since ewccli v0.3.0 `ssh_private_key_path` is mandatory into a profile. "
-            f"`ssh_private_key_path` key is missing from your profile {profile}. "
-            f"Check your profile in ~/.ewccli/profiles and add ssh_public_key_path with a path to your SSH private key."
-            "Or simply create a new profile using ewc login command."
-        )
-
-
-    return {
-        "profile": profile,
-        "federee": federee,
-        "region": section.get("region"),
-        "tenant_name": section.get("tenant_name"),
-        "ssh_public_key_path": ssh_public_key_path,
-        "ssh_private_key_path": ssh_private_key_path,
-        "token": section.get("token"),
-        "application_credential_id": section.get("application_credential_id"),
-        "application_credential_secret": section.get("application_credential_secret"),
-    }
 
 
 def generate_random_id(length: int = 10):
@@ -470,158 +284,45 @@ def run_command_from_host_live(
 
 def download_items(force: bool = False):
     """Download items for the community hub."""
-    # URL of the YAML file
-    url = ewc_hub_config.EWC_CLI_HUB_ITEMS_URL
-
-    # Path to ~/.ewccli
-    config_dir = ewc_hub_config.EWC_CLI_BASE_PATH
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    # Destination file
-    item_file = ewc_hub_config.EWC_CLI_HUB_ITEMS_PATH
-
-    if item_file.exists() and not force:
-        _LOGGER.debug(f"✅ Items file already exist at {item_file}. Skipping download.")
-        return
-
-    if force:
-        _LOGGER.debug(
-            f"✅ Items file already exist at {item_file}. Force enabled, redownloading it."
-        )
-
-    # Download the file
-    try:
-        # Add a timeout (e.g., 10 seconds)
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        item_file.write_text(response.text)
-        _LOGGER.debug(f"Downloaded to: {item_file}")
-    except requests.Timeout:
-        _LOGGER.error("⚠️ Request timed out.")
-    except requests.RequestException as e:
-        _LOGGER.error(f"❌ Failed to download file: {e}")
+    _config_service.download_items(force=force)
 
 
 def load_ssh_private_key(encoded_key: Optional[str] = None):
     """Load SSH private key"""
-    if encoded_key is None:
-        _LOGGER.error("EWC_CLI_ENCODED_SSH_PRIVATE_KEY environment variable not set.")
+    result = _keypair_service.load_ssh_private_key(encoded_key=encoded_key)
+    if result is None and encoded_key is None:
         sys.exit(1)
-
-    try:
-        private_key = base64.b64decode(encoded_key).decode("utf-8")
-        return private_key
-    except Exception as e:
-        _LOGGER.error(f"Error decoding private key: {e}")
-        return None
+    return result
 
 
 def load_ssh_public_key(encoded_key: Optional[str] = None):
     """Load SSH public key from a base64-encoded string."""
-    if encoded_key is None:
-        _LOGGER.error("EWC_CLI_ENCODED_SSH_PUBLIC_KEY environment variable not set.")
+    result = _keypair_service.load_ssh_public_key(encoded_key=encoded_key)
+    if result is None and encoded_key is None:
         sys.exit(1)
-
-    try:
-        public_key = base64.b64decode(encoded_key).decode("utf-8")
-        return public_key
-    except Exception as e:
-        _LOGGER.error(f"Error decoding public key: {e}")
-        return None
+    return result
 
 
 def verify_private_key(private_key: str):
     """Verify SSH private key using cryptography."""
-    error = False
     try:
-        key_bytes = private_key.encode("utf-8")
-        serialization.load_pem_private_key(
-            key_bytes,
-            password=None,  # If supporting encrypted keys, provide a password
-            backend=default_backend(),
-        )
-        _LOGGER.info("✅ Private key is valid.")
-    except ValueError as e:
-        _LOGGER.error(f"❌ Invalid SSH key (ValueError): {e}")
-        error = True
-    except TypeError as e:
-        _LOGGER.error(f"❌ SSH key error (TypeError): {e}")
-        error = True
-    except Exception as e:
-        _LOGGER.error(f"❌ Unexpected error while verifying SSH key: {e}")
-        error = True
-    if error:
+        _keypair_service.verify_private_key(private_key=private_key)
+    except KeyPairError as e:
+        _LOGGER.error(str(e))
         sys.exit(1)
 
 
 def check_ssh_keys_match(ssh_private_key_path: str, ssh_public_key_path: str) -> bool:
-    """
-    Check whether an SSH private key corresponds to a given public key.
-
-    Supports PEM and OpenSSH private key formats and common SSH algorithms
-    such as RSA, ECDSA, and Ed25519.
-
-    Args:
-        ssh_private_key_path: Path to the SSH private key file.
-        ssh_public_key_path: Path to the SSH public key file (.pub).
-
-    Returns:
-        True if the public key matches the private key.
-
-    Raises:
-        ValueError: If the private key format or algorithm is unsupported.
-    """
-    # Ensure files exist
-    for p in [ssh_private_key_path, ssh_public_key_path]:
-        if not Path(p).expanduser().is_file():
-            raise ValueError(f"SSH key file does not exist: {p}")
-
-    with open(ssh_private_key_path, "rb") as f:
-        private_data = f.read()
-
-    private_key = None
-
-    try:
-        private_key = serialization.load_pem_private_key(private_data, password=None)
-    except ValueError:
-        try:
-            private_key = serialization.load_ssh_private_key(private_data, password=None)
-        except ValueError:
-            raise ValueError("Unsupported or invalid private key format")
-
-    derived_public = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.OpenSSH,
-        format=serialization.PublicFormat.OpenSSH
+    """Check whether an SSH private key corresponds to a given public key."""
+    return _keypair_service.check_ssh_keys_match(
+        ssh_private_key_path=ssh_private_key_path,
+        ssh_public_key_path=ssh_public_key_path,
     )
-
-    # Read provided public key and strip comment
-    with open(ssh_public_key_path, "r") as f:
-        parts = f.read().strip().split()
-        if len(parts) < 2:
-            raise ValueError(f"Invalid public key format: {ssh_public_key_path}")
-        provided_public = " ".join(parts[:2]).encode()
-
-    return derived_public == provided_public
 
 
 def save_ssh_key(ssh_key, path_key):
     """Store SSH key to the provided path."""
-    # Define the file path to save the key
-    key_path = os.path.expanduser(path_key)
-
-    # Ensure the .ssh directory exists
-    os.makedirs(os.path.dirname(key_path), exist_ok=True)
-
-    # Write the private key to the file with secure permissions
-    with open(key_path, "w") as key_file:
-        key_file.write(ssh_key)
-
-    # Set file permissions to 0600 (owner read/write only)
-    os.chmod(key_path, 0o600)
-
-    _LOGGER.debug(
-        f"Key saved temporarely into the container to {key_path} with 0600 permissions."
-    )
+    _keypair_service.save_ssh_key(ssh_key=ssh_key, path_key=path_key)
 
 
 def save_encoded_ssh_keys(
@@ -631,79 +332,16 @@ def save_encoded_ssh_keys(
     ssh_private_encoded: Optional[str] = None,
 ):
     """Store SSH keys provided as encoded strings."""
-    public_written = False
-    private_written = False
-
-    # PUBLIC KEY
-    if ssh_public_encoded:
-        _LOGGER.info("Using encoded public key provided.")
-        public_key = load_ssh_public_key(encoded_key=ssh_public_encoded)
-
-        if public_key is not None:
-            ssh_public_key_path.parent.mkdir(parents=True, exist_ok=True)
-            save_ssh_key(
-                ssh_key=public_key, path_key=ssh_public_key_path
-            )
-            public_written = True
-
-    # PRIVATE KEY
-    if ssh_private_encoded:
-        _LOGGER.info("Using encoded private key provided.")
-        private_key = load_ssh_private_key(encoded_key=ssh_private_encoded)
-
-        if private_key is not None:
-            ssh_private_key_path.parent.mkdir(parents=True, exist_ok=True)
-            verify_private_key(private_key=private_key)
-            save_ssh_key(
-                ssh_key=private_key, path_key=ssh_private_key_path
-            )
-            private_written = True
-
-    return public_written, private_written
+    return _keypair_service.save_encoded_ssh_keys(
+        ssh_public_key_path=ssh_public_key_path,
+        ssh_private_key_path=ssh_private_key_path,
+        ssh_public_encoded=ssh_public_encoded,
+        ssh_private_encoded=ssh_private_encoded,
+    )
 
 
 def generate_ssh_keypair(
     resolved_profile: str
 ) -> Tuple[str, str]:
     """Generate RSA SSH Key Pair and save to ~/.ssh"""
-    private_key = rsa.generate_private_key(
-        public_exponent=65537, key_size=2048, backend=default_backend()
-    )
-
-    private_key_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-    public_key = private_key.public_key()
-    public_key_ssh = public_key.public_bytes(
-        encoding=serialization.Encoding.OpenSSH,
-        format=serialization.PublicFormat.OpenSSH,
-    )
-
-    # Ensure parent directories exist
-    Path(ewc_hub_config.EWC_CLI_HUB_SSH_REPO_PATH).mkdir(parents=True, exist_ok=True)
-
-    ssh_private_key_path = ewc_hub_config.EWC_CLI_HUB_SSH_REPO_PATH / f"{resolved_profile}_id_rsa"
-
-    # Save private key
-    with open(ssh_private_key_path, "wb") as f:
-        f.write(private_key_pem)
-
-    # Restrict permissions to owner only
-    os.chmod(ssh_private_key_path, 0o600)
-
-    ssh_public_key_path = ewc_hub_config.EWC_CLI_HUB_SSH_REPO_PATH / f"{resolved_profile}_id_rsa.pub"
-    # Save public key
-    with open(ssh_public_key_path, "wb") as f:
-        f.write(public_key_ssh)
-
-    # Public key can be world-readable
-    os.chmod(ssh_public_key_path, 0o644)
-
-    _LOGGER.info(
-        f"SSH key pair generated at {ssh_private_key_path} and {ssh_public_key_path}"
-    )
-
-    return ssh_private_key_path.as_posix(), ssh_public_key_path.as_posix()
+    return _keypair_service.generate_ssh_keypair(resolved_profile=resolved_profile)
