@@ -6,9 +6,15 @@
 # See the LICENSE file for more details
 
 
-"""Kubernetes backend driver."""
+"""Kubernetes backend client.
 
-import sys
+Implements :class:`~ewccli.backends.interfaces.KubernetesBackendInterface`.
+Connection is established in ``__init__`` via kubeconfig or token.
+
+Transitional: this client will be reused by the standalone
+``ewc-backend`` service (Phase 4, KAM-9).
+"""
+
 import json
 from typing import List, Dict, Optional
 
@@ -16,13 +22,19 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
 from ewccli.logger import get_logger
+from ewccli.backends.exceptions import BackendConnectionError
+from ewccli.backends.interfaces import KubernetesBackendInterface
 
 
 _LOGGER = get_logger(__name__)
 
 
-class KubernetesBackend:
-    """Kubernetes backend class."""
+class KubernetesBackend(KubernetesBackendInterface):
+    """Kubernetes backend client.
+
+    Implements :class:`~ewccli.backends.interfaces.KubernetesBackendInterface`.
+    Connection lifecycle is managed in ``__init__`` (kubeconfig or token).
+    """
 
     def __init__(
         self,
@@ -46,28 +58,39 @@ class KubernetesBackend:
                 client.Configuration.set_default(configuration)
                 _LOGGER.debug("Initialized Kubernetes client with token and host.")
             except Exception as e:
-                _LOGGER.error(
-                    f"❌ Failed to initialize Kubernetes client with token+host: {e}"
-                )
-                sys.exit(1)
+                raise BackendConnectionError(
+                    f"Failed to initialize Kubernetes client with token+host: {e}"
+                ) from e
         else:
             try:
                 config.load_kube_config()
                 _LOGGER.debug("Loaded kubeconfig from local file.")
             except ConfigException:
-                _LOGGER.error(
-                    "❌ Failed to load Kubernetes configuration.\n"
-                    "Primary option: run `ewc login` to generate configuration.\n"
-                    "Alternative options:\n"
-                    "  - Ensure your KUBECONFIG environment variable points to a valid kubeconfig file.\n"
-                    "  - Ensure ~/.kube/config exists and is valid."
+                raise BackendConnectionError(
+                    "Failed to load Kubernetes configuration. "
+                    "Primary option: run `ewc login` to generate configuration. "
+                    "Alternative options: "
+                    "ensure KUBECONFIG points to a valid kubeconfig file, "
+                    "or ensure ~/.kube/config exists and is valid."
                 )
-                sys.exit(1)
 
         self.custom_api = client.CustomObjectsApi()
         self.core_api = client.CoreV1Api()
         self.apps_api = client.AppsV1Api()
         self.api = client.ApiextensionsV1Api()
+        self._connected = True
+
+    def connect(self, **kwargs):
+        """Kubernetes connects in ``__init__``; this is a no-op for interface compliance."""
+        return self
+
+    def close(self) -> None:
+        """Release Kubernetes client resources."""
+        self._connected = False
+
+    def is_connected(self) -> bool:
+        """Return ``True`` if the Kubernetes client is initialised."""
+        return self._connected
 
     def delete_custom_resource(
         self, group: str, version: str, namespace: str, plural: str, name: str

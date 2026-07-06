@@ -6,10 +6,16 @@
 # See the LICENSE file for more details
 
 
-"""Openstack backend methods."""
+"""OpenStack backend client.
+
+Implements :class:`~ewccli.backends.interfaces.OpenstackBackendInterface`.
+Connection lifecycle is centralised via :meth:`get_connection`.
+
+Transitional: this client will be reused by the standalone
+``ewc-backend`` service (Phase 4, KAM-9).
+"""
 
 import time
-import sys
 import os
 from typing import Tuple, Optional, Any
 from collections import namedtuple
@@ -23,6 +29,12 @@ from openstack.compute.v2.server import Server
 from ewccli.logger import get_logger
 from ewccli.enums import Federee
 from ewccli.configuration import config as ewc_hub_config
+from ewccli.backends.exceptions import (
+    BackendConfigError,
+    BackendConnectionError,
+    BackendValidationError,
+)
+from ewccli.backends.interfaces import OpenstackBackendInterface
 
 _LOGGER = get_logger(__name__)
 
@@ -38,8 +50,12 @@ NetworkResult = namedtuple("NetworkResult", "success changed")
 _MAX_CHARACTERS_SERVER_NAME_OPENSTACK = 63
 
 
-class OpenstackBackend:
-    """Openstack backend class."""
+class OpenstackBackend(OpenstackBackendInterface):
+    """OpenStack backend client.
+
+    Implements :class:`~ewccli.backends.interfaces.OpenstackBackendInterface`.
+    Connection lifecycle is centralised via :meth:`get_connection`.
+    """
 
     def __init__(
         self,
@@ -53,7 +69,9 @@ class OpenstackBackend:
         :param application_credential_id: OpenStack application credential ID.
         :param application_credential_secret: OpenStack application credential secret.
         :param auth_url: Openstack Auth URL
+        :raises BackendConfigError: If credentials cannot be loaded.
         """
+        self._connection = None
         try:
             if application_credential_id and application_credential_secret:
                 # Try loading from parameters or fall back to env vars
@@ -80,13 +98,12 @@ class OpenstackBackend:
                 self.auth_url = cloud_config.get("auth_url")
 
         except (ConfigException, Exception) as e:
-            _LOGGER.error(
-                f"🔐 Missing OpenStack credentials.: {e}\n\n"
-                "❌ No config found. Run `ewc login` first or have a cloud.yaml"
-                " under ~/.config/openstack/clouds.yaml or set the following environment variables:\n"
-                "-OS_APPLICATION_CREDENTIAL_ID"
-                "-OS_APPLICATION_CREDENTIAL_SECRET"
-            )
+            raise BackendConfigError(
+                "Missing OpenStack credentials. Run `ewc login` first or have a "
+                "clouds.yaml under ~/.config/openstack/clouds.yaml or set the "
+                "following environment variables: OS_APPLICATION_CREDENTIAL_ID, "
+                f"OS_APPLICATION_CREDENTIAL_SECRET. Underlying error: {e}"
+            ) from e
 
     def connect(
         self,
@@ -126,6 +143,49 @@ class OpenstackBackend:
         )
 
         return os_connection
+
+    def get_connection(
+        self,
+        auth_url: Optional[str] = None,
+        application_credential_id: Optional[str] = None,
+        application_credential_secret: Optional[str] = None,
+    ):
+        """Return a cached or newly-created OpenStack connection.
+
+        Centralises connection lifecycle so callers no longer invoke
+        ``connect()`` per-command.  The connection is created lazily on
+        first call and cached on the instance.
+
+        :raises BackendConnectionError: If the connection cannot be established.
+        :returns: An ``openstack.connection.Connection`` instance.
+        """
+        if self._connection is not None:
+            return self._connection
+        try:
+            self._connection = self.connect(
+                auth_url=auth_url,
+                application_credential_id=application_credential_id,
+                application_credential_secret=application_credential_secret,
+            )
+        except Exception as exc:
+            raise BackendConnectionError(
+                f"Failed to connect to OpenStack: {exc}"
+            ) from exc
+        return self._connection
+
+    def close(self) -> None:
+        """Close the cached OpenStack connection if one exists."""
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception as exc:
+                _LOGGER.debug("Error closing OpenStack connection: %s", exc)
+            finally:
+                self._connection = None
+
+    def is_connected(self) -> bool:
+        """Return ``True`` if a cached connection exists."""
+        return self._connection is not None
 
     def create_server(
         self,
@@ -167,11 +227,10 @@ class OpenstackBackend:
         :param dry_run: Dry run.
         """
         if len(server_name) > _MAX_CHARACTERS_SERVER_NAME_OPENSTACK:
-            _LOGGER.error(
+            raise BackendValidationError(
                 f"server_name cannot exceed {_MAX_CHARACTERS_SERVER_NAME_OPENSTACK},"
                 " please select a shorter name"
             )
-            sys.exit(1)
 
         # Do nothing if the server appears to exist
         server_info = conn.get_server(name_or_id=server_name)
