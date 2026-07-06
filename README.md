@@ -309,15 +309,33 @@ ewc hub --path-to-catalog ./custom_catalog.yaml deploy
 
 ## Backends
 
-This section described the backends used and which commands are backed by those backends.
+This section describes the backends used and which commands are backed by those backends.
+
+As of Phase 3, each backend implements a `typing.Protocol` interface, shares a
+unified exception hierarchy, and supports centralized connection lifecycle and
+dependency injection. See [`ewccli/backends/ARCHITECTURE.md`](./ewccli/backends/ARCHITECTURE.md)
+for full architecture documentation, including:
+
+- Backend interface/protocol definitions
+- Exception hierarchy
+- Retry/timeout configuration
+- Connection lifecycle pattern
+- Dependency injection pattern
+- Crossplane decision record
 
 ### Openstack
 
 Used by infra and hub subcommands.
 
+Implements `OpenstackBackendInterface` with centralized connection lifecycle
+via `get_connection()`.
+
 ### Ansible
 
 Used by hub subcommand.
+
+Implements `AnsibleBackendInterface`. Ansible manages connections per-task via
+`ansible_runner`; `connect`/`close` are no-ops for interface compatibility.
 
 ### Terraform
 
@@ -325,7 +343,11 @@ Used by hub subcommand. (COMING SOON)
 
 ### Kubernetes
 
-Used by dns, s3, k8s subcommmands. (COMING SOON)
+Used by dns, s3, k8s subcommands. (COMING SOON — Crossplane commands deferred,
+see [Crossplane Decision](./ewccli/backends/CROSSPLANE_DECISION.md))
+
+Implements `KubernetesBackendInterface` with custom-resource management and
+unified error handling.
 
 ## SW Bill of Materials (SBoM)
 
