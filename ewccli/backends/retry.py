@@ -10,6 +10,9 @@
 Provides a decorator that wraps a callable with exponential-backoff
 retries.  Retryable exceptions are configurable; by default only
 ``BackendTimeoutError`` and transient ``BackendConnectionError`` are retried.
+
+Transitional: these contracts will be reused by the standalone
+``ewc-backend`` service (Phase 4, KAM-9).
 """
 
 import functools
