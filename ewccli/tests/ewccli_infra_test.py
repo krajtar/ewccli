@@ -39,7 +39,11 @@ def conn():
 
 @pytest.fixture
 def backend():
-    return OpenstackBackend()
+    return OpenstackBackend(
+        application_credential_id="test-id",
+        application_credential_secret="test-secret",
+        auth_url="https://test.example:5000/v3",
+    )
 
 
 class FakeServer(SimpleNamespace):

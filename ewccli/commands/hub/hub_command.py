@@ -481,7 +481,7 @@ def deploy_cmd(  # noqa: CFQ002, CFQ001, CCR001, C901
 
         try:
             # Step 1: Authenticate and initialize the OpenStack connection
-            openstack_api = openstack_backend.connect(
+            openstack_api = openstack_backend.get_connection(
                 auth_url=auth_url,
                 application_credential_id=application_credential_id,
                 application_credential_secret=application_credential_secret,

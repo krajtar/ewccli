@@ -26,7 +26,7 @@ from rich import box
 
 from openstack import connection
 
-from ewccli.backends.openstack.backend_ostack import OpenstackBackend
+from ewccli.backends.interfaces import OpenstackBackendInterface
 from ewccli.enums import Federee, Region
 from ewccli.configuration import config as ewc_hub_config
 from ewccli.logger import get_logger
@@ -237,7 +237,7 @@ class ServerService:
     @staticmethod
     def resolve_image_and_flavor(
         conn: connection.Connection,
-        openstack_backend: OpenstackBackend,
+        openstack_backend: OpenstackBackendInterface,
         federee: str,
         region: str,
         flavour_name: Optional[str] = None,
@@ -457,7 +457,7 @@ class ServerService:
 
     @staticmethod
     def pre_deploy_server_setup(
-        openstack_backend: OpenstackBackend,
+        openstack_backend: OpenstackBackendInterface,
         openstack_api: connection.Connection,
         federee: str,
         region: str,
@@ -679,7 +679,7 @@ class ServerService:
 
     @staticmethod
     def deploy_server(
-        openstack_backend: OpenstackBackend,
+        openstack_backend: OpenstackBackendInterface,
         openstack_api: connection.Connection,
         federee: str,
         server_inputs: dict,
@@ -774,7 +774,7 @@ class ServerService:
 
     @staticmethod
     def post_deploy_server_setup(
-        openstack_backend: OpenstackBackend,
+        openstack_backend: OpenstackBackendInterface,
         openstack_api: connection.Connection,
         federee: str,
         server_inputs: dict,
@@ -845,7 +845,7 @@ class ServerService:
 
     @staticmethod
     def create_server_command(
-        openstack_backend: OpenstackBackend,
+        openstack_backend: OpenstackBackendInterface,
         openstack_api: connection.Connection,
         federee: str,
         region: str,

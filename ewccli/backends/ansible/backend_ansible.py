@@ -16,12 +16,35 @@ import ansible_runner
 
 from ewccli.utils import run_command_from_host
 from ewccli.logger import get_logger
+from ewccli.backends.interfaces import AnsibleBackendInterface
 
 _LOGGER = get_logger(__name__)
 
 
-class AnsibleBackend:
-    """Ansible backend class."""
+class AnsibleBackend(AnsibleBackendInterface):
+    """Ansible backend client.
+
+    Implements :class:`~ewccli.backends.interfaces.AnsibleBackendInterface`.
+    Ansible runs locally via ``ansible_runner``; connection lifecycle is
+    a no-op but provided for interface compliance.
+    """
+
+    def __init__(self):
+        """Initialize the Ansible backend."""
+        self._connected = True
+
+    def connect(self, **kwargs):
+        """No-op; Ansible runs locally via ``ansible_runner``."""
+        self._connected = True
+        return self
+
+    def close(self) -> None:
+        """Release any temporary Ansible runner resources."""
+        self._connected = False
+
+    def is_connected(self) -> bool:
+        """Return ``True`` if the backend is initialised."""
+        return self._connected
 
     def run_ansible_live(
         self,
