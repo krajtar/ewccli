@@ -6,7 +6,14 @@
 # See the LICENSE file for more details
 
 
-"""Kubernetes backend driver."""
+"""Kubernetes backend client.
+
+Implements :class:`~ewccli.backends.interfaces.KubernetesBackendInterface`.
+Connection is established in ``__init__`` via kubeconfig or token.
+
+Transitional: this client will be reused by the standalone
+``ewc-backend`` service (Phase 4, KAM-9).
+"""
 
 import json
 from typing import List, Dict, Optional
@@ -16,13 +23,18 @@ from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
 from ewccli.logger import get_logger
 from ewccli.backends.exceptions import BackendConnectionError
+from ewccli.backends.interfaces import KubernetesBackendInterface
 
 
 _LOGGER = get_logger(__name__)
 
 
-class KubernetesBackend:
-    """Kubernetes backend class."""
+class KubernetesBackend(KubernetesBackendInterface):
+    """Kubernetes backend client.
+
+    Implements :class:`~ewccli.backends.interfaces.KubernetesBackendInterface`.
+    Connection lifecycle is managed in ``__init__`` (kubeconfig or token).
+    """
 
     def __init__(
         self,
