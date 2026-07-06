@@ -16,12 +16,49 @@ import ansible_runner
 
 from ewccli.utils import run_command_from_host
 from ewccli.logger import get_logger
+from ewccli.backends.interfaces import AnsibleBackendInterface
 
 _LOGGER = get_logger(__name__)
 
 
-class AnsibleBackend:
-    """Ansible backend class."""
+class AnsibleBackend(AnsibleBackendInterface):
+    """Ansible backend client.
+
+    Implements :class:`~ewccli.backends.interfaces.AnsibleBackendInterface`.
+    Ansible does not maintain a persistent connection; ``connect`` and
+    ``is_connected`` are provided for interface compatibility.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the Ansible backend.
+
+        Ansible does not require a persistent connection, so initialisation
+        is lightweight.  The ``_connected`` flag is always ``True`` because
+        each ``ansible_runner`` invocation manages its own process lifecycle.
+        """
+        self._connected = True
+
+    def connect(self, *args, **kwargs) -> None:
+        """No-op connection method for interface compatibility.
+
+        Ansible establishes per-task connections via ``ansible_runner``,
+        so there is no persistent connection to manage.
+        """
+        self._connected = True
+
+    def close(self) -> None:
+        """No-op close method for interface compatibility."""
+        self._connected = False
+
+    def is_connected(self) -> bool:
+        """Return ``True`` (Ansible manages connections per-task)."""
+        return self._connected
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def run_ansible_live(
         self,
@@ -31,7 +68,7 @@ class AnsibleBackend:
         host: Optional[str] = None,
         env: Optional[dict] = None,
         extra_vars: Optional[str] = None,
-    ):
+    ) -> int:
         """
         Run an Ansible task (playbook or ad-hoc module) and stream output live.
 
@@ -43,8 +80,8 @@ class AnsibleBackend:
         - cmdline: command for ansible (optional)
         - extra_vars: --extra-vars equivalent
 
-        Raises:
-        - RuntimeError on failure.
+        Returns:
+        - The ansible-runner return code (0 on success, non-zero on failure).
         """
         _LOGGER.info(
             'Running: "%s" -> on host: "%s"',

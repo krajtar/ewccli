@@ -170,7 +170,7 @@ def create_cmd(
 
     try:
         # Step 1: Authenticate and initialize the OpenStack connection
-        openstack_api = ctx.openstack_backend.connect(
+        openstack_api = ctx.openstack_backend.get_connection(
             auth_url=auth_url,
             application_credential_id=application_credential_id,
             application_credential_secret=application_credential_secret,
@@ -272,7 +272,7 @@ def show_cmd(
 
     try:
         # Step 1: Authenticate and initialize the OpenStack connection
-        openstack_api = ctx.openstack_backend.connect(
+        openstack_api = ctx.openstack_backend.get_connection(
             auth_url=auth_url,
             application_credential_id=application_credential_id,
             application_credential_secret=application_credential_secret,
@@ -333,7 +333,7 @@ def list_cmd(
 
     try:
         # Step 1: Authenticate and initialize the OpenStack connection
-        openstack_api = ctx.openstack_backend.connect(
+        openstack_api = ctx.openstack_backend.get_connection(
             auth_url=auth_url,
             application_credential_id=application_credential_id,
             application_credential_secret=application_credential_secret,
@@ -388,7 +388,7 @@ def delete_cmd(
     # Step 1: Authenticate and initialize the OpenStack connection
     try:
         # Step 1: Authenticate and initialize the OpenStack connection
-        openstack_api = ctx.openstack_backend.connect(
+        openstack_api = ctx.openstack_backend.get_connection(
             auth_url=auth_url,
             application_credential_id=application_credential_id,
             application_credential_secret=application_credential_secret,

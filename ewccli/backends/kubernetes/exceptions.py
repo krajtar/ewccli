@@ -8,5 +8,12 @@
 """Exceptions class for Kubernetes backend."""
 
 
-class ResourceAlreadyExistsError(Exception):
-    """Exception raised when the resource already exists in the cluster."""
+from ewccli.backends.exceptions import BackendAlreadyExistsError
+
+
+class ResourceAlreadyExistsError(BackendAlreadyExistsError):
+    """Exception raised when a Kubernetes resource already exists in the cluster.
+
+    Inherits from :class:`~ewccli.backends.exceptions.BackendAlreadyExistsError`
+    so it is part of the unified backend exception hierarchy.
+    """

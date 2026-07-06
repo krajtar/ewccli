@@ -34,6 +34,7 @@ from ewccli.enums import (
     HubItemCLIKeys,
 )
 from ewccli.backends.ansible.backend_ansible import AnsibleBackend
+from ewccli.backends.interfaces import AnsibleBackendInterface
 from ewccli.services.config_service import ConfigService
 from ewccli.services.exceptions import HubDeployServiceError
 from ewccli.logger import get_logger
@@ -392,7 +393,7 @@ class HubDeployService:
         working_directory_path: str,
         ssh_private_key_path: str,
         dry_run: bool = False,
-        ansible_backend: Optional[AnsibleBackend] = None,
+        ansible_backend: Optional[AnsibleBackendInterface] = None,
     ) -> int:
         """Run item based on Ansible Playbook. Returns return code."""
         if ansible_backend is None:

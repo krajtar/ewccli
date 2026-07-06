@@ -8,7 +8,6 @@
 
 """Kubernetes backend driver."""
 
-import sys
 import json
 from typing import List, Dict, Optional
 
@@ -16,13 +15,21 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.config.config_exception import ConfigException
 from ewccli.logger import get_logger
+from ewccli.backends.exceptions import (
+    BackendConnectionError,
+    BackendOperationError,
+)
+from ewccli.backends.interfaces import KubernetesBackendInterface
 
 
 _LOGGER = get_logger(__name__)
 
 
-class KubernetesBackend:
-    """Kubernetes backend class."""
+class KubernetesBackend(KubernetesBackendInterface):
+    """Kubernetes backend client.
+
+    Implements :class:`~ewccli.backends.interfaces.KubernetesBackendInterface`.
+    """
 
     def __init__(
         self,
@@ -37,6 +44,7 @@ class KubernetesBackend:
         :param host: Optional Kubernetes API server URL (used with token).
         :param verify_ssl: Whether to verify SSL certificates.
         """
+        self._connected = False
         if token and host:
             try:
                 configuration = client.Configuration()
@@ -44,30 +52,54 @@ class KubernetesBackend:
                 configuration.verify_ssl = verify_ssl
                 configuration.api_key = {"authorization": f"Bearer {token}"}
                 client.Configuration.set_default(configuration)
+                self._connected = True
                 _LOGGER.debug("Initialized Kubernetes client with token and host.")
             except Exception as e:
-                _LOGGER.error(
-                    f"❌ Failed to initialize Kubernetes client with token+host: {e}"
-                )
-                sys.exit(1)
+                raise BackendConnectionError(
+                    f"Failed to initialize Kubernetes client with token+host: {e}"
+                ) from e
         else:
             try:
                 config.load_kube_config()
+                self._connected = True
                 _LOGGER.debug("Loaded kubeconfig from local file.")
             except ConfigException:
-                _LOGGER.error(
-                    "❌ Failed to load Kubernetes configuration.\n"
-                    "Primary option: run `ewc login` to generate configuration.\n"
-                    "Alternative options:\n"
-                    "  - Ensure your KUBECONFIG environment variable points to a valid kubeconfig file.\n"
-                    "  - Ensure ~/.kube/config exists and is valid."
+                raise BackendConnectionError(
+                    "Failed to load Kubernetes configuration. "
+                    "Primary option: run `ewc login` to generate configuration. "
+                    "Alternative options: ensure KUBECONFIG env var points to a "
+                    "valid kubeconfig file, or ensure ~/.kube/config exists and is valid."
                 )
-                sys.exit(1)
 
         self.custom_api = client.CustomObjectsApi()
         self.core_api = client.CoreV1Api()
         self.apps_api = client.AppsV1Api()
         self.api = client.ApiextensionsV1Api()
+
+    def connect(self, token: Optional[str] = None, host: Optional[str] = None,
+                verify_ssl: bool = True) -> None:
+        """Establish connection to the Kubernetes API server.
+
+        For Kubernetes the connection is established in ``__init__``;
+        this method re-initialises the client if credentials change.
+
+        :raises BackendConnectionError: If reconnection fails.
+        """
+        self.__init__(token=token, host=host, verify_ssl=verify_ssl)
+
+    def close(self) -> None:
+        """Release Kubernetes client resources."""
+        self._connected = False
+
+    def is_connected(self) -> bool:
+        """Return ``True`` if the Kubernetes client is initialised."""
+        return self._connected
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def delete_custom_resource(
         self, group: str, version: str, namespace: str, plural: str, name: str
@@ -112,7 +144,7 @@ class KubernetesBackend:
                 )
                 return {}
             else:
-                raise Exception(
+                raise BackendOperationError(
                     f"Kubernetes API error [{e.status}]: {e.reason}\nResponse: {e.body}"
                 )
 
@@ -159,7 +191,7 @@ class KubernetesBackend:
                 )
                 return {}
             else:
-                raise Exception(
+                raise BackendOperationError(
                     f"Kubernetes API error [{e.status}]: {e.reason}\nResponse: {e.body}"
                 )
 
@@ -193,7 +225,7 @@ class KubernetesBackend:
                 )
                 return []
             else:
-                raise Exception(
+                raise BackendOperationError(
                     f"Kubernetes API error [{e.status}]: {e.reason}\nResponse: {e.body}"
                 )
 
@@ -273,7 +305,9 @@ class KubernetesBackend:
                 _LOGGER.error(
                     f"[{e.status}] Kubernetes API error: {e.reason}\n{e.body}",
                 )
-                raise Exception("Kubernetes API request failed")
+                raise BackendOperationError(
+                    f"Kubernetes API request failed: [{e.status}] {e.reason}"
+                ) from e
 
     def list_pods(
         self,

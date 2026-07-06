@@ -39,7 +39,10 @@ def conn():
 
 @pytest.fixture
 def backend():
-    return OpenstackBackend()
+    """Create OpenstackBackend instance without running __init__."""
+    instance = OpenstackBackend.__new__(OpenstackBackend)
+    instance._connection = None
+    return instance
 
 
 class FakeServer(SimpleNamespace):
