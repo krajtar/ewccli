@@ -6,7 +6,14 @@
 # See the LICENSE file for more details
 
 
-"""Openstack backend methods."""
+"""OpenStack backend client.
+
+Implements :class:`~ewccli.backends.interfaces.OpenstackBackendInterface`.
+Connection lifecycle is centralised via :meth:`get_connection`.
+
+Transitional: this client will be reused by the standalone
+``ewc-backend`` service (Phase 4, KAM-9).
+"""
 
 import time
 import os

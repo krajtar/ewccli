@@ -6,7 +6,15 @@
 # See the LICENSE file for more details
 
 
-"""Ansible backend methods."""
+"""Ansible backend client.
+
+Implements :class:`~ewccli.backends.interfaces.AnsibleBackendInterface`.
+Ansible runs locally via ``ansible_runner``; connection lifecycle
+methods are no-ops for interface compliance.
+
+Transitional: this client will be reused by the standalone
+``ewc-backend`` service (Phase 4, KAM-9).
+"""
 
 import os
 import shutil
